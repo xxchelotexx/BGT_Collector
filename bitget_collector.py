@@ -214,9 +214,9 @@ import os
 import time
 import sys
 from datetime import datetime, timezone
-import threading
 from collections import defaultdict
 import nest_asyncio
+import pytz
 from pymongo import MongoClient
 from dotenv import load_dotenv
 
@@ -227,7 +227,7 @@ if sys.platform.startswith('win'):
 # Cargar variables de entorno
 load_dotenv()
 
-# Aplica nest_asyncio para permitir la ejecución de asyncio.run anidado.
+# Aplica nest_asyncio para permitir la ejecución de asyncio.run anidado
 nest_asyncio.apply()
 
 # --- CONFIGURACIÓN MONGODB ATLAS ---
@@ -242,6 +242,7 @@ try:
     db = client["Monitor_P2P_Bolivia"]
     collection = db["BGT_PRICE"]
     client.admin.command('ping')
+    print("✅ Conexión exitosa a MongoDB Atlas")
 except Exception as e:
     print(f"❌ Error de conexión a MongoDB: {e}")
     exit(1)
@@ -276,13 +277,14 @@ async def scrape_bitget_p2p(url: str, operation_type: str):
     prefix = f"[{operation_type.upper()}]"
 
     async with async_playwright() as pw:
+        # Argumentos optimizados para Railway/Docker
         browser = await pw.chromium.launch(
             headless=True, 
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
-                 "--disable-dev-shm-usage"
+                "--disable-dev-shm-usage"
             ]
         )
         context = await browser.new_context(
@@ -293,8 +295,11 @@ async def scrape_bitget_p2p(url: str, operation_type: str):
         try:
             await page.goto(url, timeout=90000)
             await page.wait_for_timeout(4000)
-            await page.keyboard.press("Escape")
-            try: await page.locator('.bit-dialog__close').click(timeout=3000)
+            
+            # Cerrar popups si existen
+            try:
+                await page.keyboard.press("Escape")
+                await page.locator('.bit-dialog__close').click(timeout=3000)
             except: pass
             
             await page.wait_for_selector(".hall-list-item", state="visible", timeout=60000)
@@ -305,16 +310,12 @@ async def scrape_bitget_p2p(url: str, operation_type: str):
                 if page_num > 1:
                     target_page_locator = page.get_by_text(str(page_num), exact=True)
                     if await target_page_locator.count() == 0: 
-                        print(f"🏁 {prefix} No se encontraron más páginas.")
                         break
                     await target_page_locator.click(force=True)
-                    # Espera para que los datos carguen
                     await page.wait_for_timeout(3000)
 
                 cards = await page.query_selector_all(".hall-list-item")
-                if not cards:
-                    print(f"⚠️ {prefix} Sin anuncios detectados en página {page_num}.")
-                    break
+                if not cards: break
 
                 for card in cards:
                     name_el = await card.query_selector(".list-item__nickname")
@@ -340,9 +341,6 @@ async def scrape_bitget_p2p(url: str, operation_type: str):
                         "limit_min": v_min,
                         "limit_max": v_max
                     })
-                
-                print(f"📈 {prefix} Acumulado: {len(all_results)} registros.")
-
             return all_results
         except Exception as e:
             print(f"❌ Error en {operation_type}: {e}")
@@ -362,53 +360,41 @@ def procesar_datos_db(data, trade_type):
         
         if not precio or not cantidad_usdt: continue
 
-        if (l_max / precio) >= cantidad_usdt:
-            l_max_final = cantidad_usdt * precio
-        else:
-            l_max_final = l_max
+        l_max_final = min(l_max, cantidad_usdt * precio) if l_max > 0 else cantidad_usdt * precio
 
         vol_total += cantidad_usdt
         agrupado[precio]["suma"] += cantidad_usdt
         agrupado[precio]["conteo"] += 1
         
-        if l_min < agrupado[precio]["min"]:
-            agrupado[precio]["min"] = l_min
-        if l_max_final > agrupado[precio]["max"]:
-            agrupado[precio]["max"] = l_max_final
+        if l_min < agrupado[precio]["min"]: agrupado[precio]["min"] = l_min
+        if l_max_final > agrupado[precio]["max"]: agrupado[precio]["max"] = l_max_final
         agrupado[precio]["inmediato"] += l_max_final/precio
 
     datos_finales = {}
     for k, v in agrupado.items():
         price_key = f"{k:.2f}".replace(".", "_")
         datos_finales[price_key] = {
-            "suma": v["suma"],
-            "conteo": v["conteo"],
+            "suma": v["suma"], "conteo": v["conteo"],
             "min": v["min"] if v["min"] != float('inf') else 0.0,
-            "max": v["max"],
-            "inmediato": v["inmediato"]
+            "max": v["max"], "inmediato": v["inmediato"]
         }
-    
-    return {
-        "trade_type": trade_type,
-        "vol_total": vol_total,
-        "datos_agrupados": datos_finales
-    }
+    return {"trade_type": trade_type, "vol_total": vol_total, "datos_agrupados": datos_finales}
 
 async def main_async():
-    # URL_VENTAS -> compras_usdt (porque Bitget muestra 'Vender' para quien quiere comprar)
     compras_task = scrape_bitget_p2p(URL_VENTAS, "compras_usdt")
     ventas_task = scrape_bitget_p2p(URL_COMPRAS, "ventas_usdt")
     results = await asyncio.gather(compras_task, ventas_task)
     return results[0], results[1]
 
 def obtener_y_guardar_datos():
-    print(f"\n--- 🕒 CICLO DE SCRAPING: {datetime.now().strftime('%H:%M:%S')} ---")
-    resultados = []
+    print(f"\n--- 🕒 INICIO CICLO: {datetime.now().strftime('%H:%M:%S')} ---")
     try:
         data_compras, data_ventas = asyncio.run(main_async())
         
-        resultados.append(procesar_datos_db(data_compras, "BUY"))
-        resultados.append(procesar_datos_db(data_ventas, "SELL"))
+        resultados = [
+            procesar_datos_db(data_compras, "BUY"),
+            procesar_datos_db(data_ventas, "SELL")
+        ]
         
         documento = {
             "timestamp": datetime.now(timezone.utc),
@@ -417,24 +403,37 @@ def obtener_y_guardar_datos():
         }
         
         collection.insert_one(documento)
-        print(f"✅ ÉXITO: {len(data_compras) + len(data_ventas)} anuncios guardados en MongoDB.")
+        print(f"✅ ÉXITO: {len(data_compras) + len(data_ventas)} anuncios procesados y guardados.")
         
     except Exception as e:
-        print(f"❌ Error fatal en proceso principal: {e}")
+        print(f"❌ Error fatal en ciclo: {e}")
 
 def worker():
+    # Configurar zona horaria de Bolivia
+    tz_bolivia = pytz.timezone('America/La_Paz')
+    
+    print("🚀 Recolector Bitget P2P iniciado con Horario Dinámico.")
+    
     while True:
         obtener_y_guardar_datos()
-        print(f"⏳ Esperando 60 segundos para la siguiente ronda...")
-        time.sleep(60)
+        
+        # Determinar intervalo según hora de Bolivia
+        ahora_bol = datetime.now(tz_bolivia)
+        hora = ahora_bol.hour
+        
+        # 07:00 a 22:59 -> 1 min | 23:00 a 06:59 -> 5 min
+        if 7 <= hora < 23:
+            intervalo = 60 
+            msg = "1 minuto (Horario pico)"
+        else:
+            intervalo = 300
+            msg = "5 minutos (Horario nocturno)"
+            
+        print(f"🕒 Hora en Bolivia: {ahora_bol.strftime('%H:%M')} | Espera: {msg}")
+        time.sleep(intervalo)
 
-# if __name__ == '__main__':
-#     print("🚀 Recolector Bitget P2P -> MongoDB iniciado.")
-#     t = threading.Thread(target=worker, daemon=True)
-#     t.start()
-#     try:
-#         while True: time.sleep(1)
-#     except KeyboardInterrupt:
-#         print("\n🛑 Deteniendo recolector Bitget...")
 if __name__ == "__main__":
-    obtener_y_guardar_datos()
+    try:
+        worker()
+    except KeyboardInterrupt:
+        print("\n🛑 Proceso detenido por el usuario.")
