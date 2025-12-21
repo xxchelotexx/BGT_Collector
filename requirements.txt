@@ -3,3 +3,4 @@ requests
 nest_asyncio
 asyncio
 playwright==1.46.0
+greenlet>=3.1.1
