@@ -420,11 +420,13 @@ def worker():
         print(f"⏳ Esperando 60 segundos para la siguiente ronda...")
         time.sleep(60)
 
-if __name__ == '__main__':
-    print("🚀 Recolector Bitget P2P -> MongoDB iniciado.")
-    t = threading.Thread(target=worker, daemon=True)
-    t.start()
-    try:
-        while True: time.sleep(1)
-    except KeyboardInterrupt:
-        print("\n🛑 Deteniendo recolector Bitget...")
+# if __name__ == '__main__':
+#     print("🚀 Recolector Bitget P2P -> MongoDB iniciado.")
+#     t = threading.Thread(target=worker, daemon=True)
+#     t.start()
+#     try:
+#         while True: time.sleep(1)
+#     except KeyboardInterrupt:
+#         print("\n🛑 Deteniendo recolector Bitget...")
+if __name__ == "__main__":
+    obtener_y_guardar_datos()
