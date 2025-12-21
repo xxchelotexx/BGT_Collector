@@ -33,4 +33,4 @@ jobs:
           MONGO_PASS: ${{ secrets.MONGO_PASS }}
           MONGO_CLUSTER: ${{ secrets.MONGO_CLUSTER }}
         run: |
-          python scraper.py
+          python bitget_collector.py
