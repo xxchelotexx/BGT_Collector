@@ -195,7 +195,7 @@ def worker():
     while True:
         obtener_y_guardar_datos()
         # Tiempo de espera entre rondas de scraping (Playwright es lento, 10s es ambicioso pero posible)
-        time.sleep(50)
+        time.sleep(60)
 
 if __name__ == '__main__':
     print("🚀 Recolector Bitget P2P -> MongoDB iniciado.")
