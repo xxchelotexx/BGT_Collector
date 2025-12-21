@@ -23,9 +23,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 🌐 Instalar Chromium (Playwright)
+      - name: 🌐 Instalar Chromium y dependencias
         run: |
-          playwright install chromium
+          python -m playwright install chromium --with-deps
 
       - name: ▶ Ejecutar Scraper
         env:
