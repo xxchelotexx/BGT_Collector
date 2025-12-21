@@ -1,4 +1,6 @@
 requests
 pymongo
+asyncio
+nest-asyncio
 python-dotenv
 playwright==1.46.0
