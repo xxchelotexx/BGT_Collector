@@ -1,0 +1,5 @@
+# requirements.txt
+requests
+nest_asyncio
+asyncio
+playwright==1.46.0

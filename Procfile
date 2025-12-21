@@ -1,0 +1,1 @@
+web: python bitget_collector.py
