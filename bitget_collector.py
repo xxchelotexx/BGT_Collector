@@ -65,7 +65,7 @@ def extract_limits(text):
 # --- Función de Scraping ---
 async def scrape_bitget_p2p(url: str, operation_type: str):
     all_results = []
-    MAX_PAGES = 10
+    MAX_PAGES = 20
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
         context = await browser.new_context(
