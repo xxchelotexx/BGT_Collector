@@ -219,7 +219,7 @@ def worker():
     while True:
         obtener_y_guardar_datos()
         print(f"⏳ Esperando 60 segundos para la siguiente ronda...")
-        time.sleep(60)
+        time.sleep(120)
 
 if __name__ == '__main__':
     print("🚀 Recolector Bitget P2P -> MongoDB iniciado.")
