@@ -210,7 +210,7 @@ def obtener_y_guardar_datos():
         
         collection.insert_one(documento)
         print(f"✅ ÉXITO: {len(data_compras) + len(data_ventas)} anuncios guardados en MongoDB.")
-        print (resultados)
+        
         
     except Exception as e:
         print(f"❌ Error fatal en proceso principal: {e}")
