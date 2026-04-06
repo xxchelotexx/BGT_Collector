@@ -11,6 +11,7 @@ from collections import defaultdict
 import nest_asyncio
 from pymongo import MongoClient
 from dotenv import load_dotenv
+from curl_cffi import requests
 
 # CONFIGURACIÓN DE CONSOLA PARA EMOTICONES
 if sys.stdout.encoding != 'utf-8':
@@ -61,86 +62,85 @@ def extract_limits(text):
     except:
         return 0.0, 0.0
 
-# --- Función de Scraping ---
-async def scrape_bitget_p2p(url: str, operation_type: str):
+
+async def scrape_bitget_p2p(url_unused: str, operation_type: str):
+
+    api_url = "https://www.bitget.com/v1/p2p/pub/adv/queryAdvList"
     all_results = []
-    MAX_PAGES = 20
     prefix = f"[{operation_type.upper()}]"
+    
+    # Mapeo de 'side': Bitget usa 1 para COMPRA (Buy) y 2 para VENTA (Sell)
+    # Según tu código original: 
+    # URL_VENTAS -> compras_usdt (Side 1)
+    # URL_COMPRAS -> ventas_usdt (Side 2)
+    side_value = 1 if operation_type == "compras_usdt" else 2
 
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(
-            headless=True, 
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                 "--disable-dev-shm-usage"
-            ]
-        )
-        context = await browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        page = await context.new_page()
-        try:
-            await page.goto(url, timeout=90000)
-            await page.wait_for_timeout(4000)
-            await page.keyboard.press("Escape")
-            try: await page.locator('.bit-dialog__close').click(timeout=3000)
-            except: pass
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "content-type": "application/json",
+        "origin": "https://www.bitget.com",
+        "referer": "https://www.bitget.com/es/p2p-trade/buy/USDT?fiatCode=BOB",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    }
+
+    payload = {
+        "adAreaId": 0,
+        "allowPlaceOrderFlag": "1",
+        "attentionMerchantFlag": False,
+        "coinCode": "USDT",
+        "fiatCode": "BOB",
+        "languageType": 7,
+        "orderBy": 1,
+        "pageNo": 1,
+        "pageSize": 50,
+        "rookieFriendlyFlag": False,
+        "side": side_value
+    }
+
+    hay_mas_datos = True
+
+    try:
+        while hay_mas_datos:
+            print(f"📄 {prefix} Consultando API página {payload['pageNo']}...")
             
-            await page.wait_for_selector(".hall-list-item", state="visible", timeout=60000)
+            # Usamos impersonate para evitar detección
+            response = requests.post(api_url, json=payload, headers=headers, impersonate="chrome110")
             
-            for page_num in range(1, MAX_PAGES + 1):
-                print(f"📄 {prefix} Procesando página {page_num}...")
-                
-                if page_num > 1:
-                    target_page_locator = page.get_by_text(str(page_num), exact=True)
-                    if await target_page_locator.count() == 0: 
-                        print(f"🏁 {prefix} No se encontraron más páginas.")
-                        break
-                    await target_page_locator.click(force=True)
-                    # Espera para que los datos carguen
-                    await page.wait_for_timeout(3000)
+            if response.status_code != 200:
+                print(f"❌ {prefix} Error {response.status_code} en API.")
+                break
 
-                cards = await page.query_selector_all(".hall-list-item")
-                if not cards:
-                    print(f"⚠️ {prefix} Sin anuncios detectados en página {page_num}.")
-                    break
+            res_json = response.json()
+            data = res_json.get('data', {})
+            anuncios_api = data.get('dataList', [])
 
-                for card in cards:
-                    name_el = await card.query_selector(".list-item__nickname")
-                    name = await name_el.inner_text() if name_el else "N/A"
-                    
-                    price_el = await card.query_selector(".price-shower")
-                    raw_price = await price_el.inner_text() if price_el else None
-                    
-                    amount_el = await card.query_selector(".list_limit span span:first-child")
-                    raw_amount = await amount_el.inner_text() if amount_el else None
-                    
-                    limit_el = await card.query_selector(".list_limit")
-                    limit_text = await limit_el.inner_text() if limit_el else ""
-                    range_match = re.search(r"([\d,.]+\s*–\s*[\d,.]+)", limit_text)
-                    range_str = range_match.group(1) if range_match else ""
-                    v_min, v_max = extract_limits(range_str)
+            if not anuncios_api:
+                break
 
-                    all_results.append({
-                        "tipo": operation_type,
-                        "merchant": name.strip(),
-                        "precio_bob": clean_number(raw_price),
-                        "monto_usdt": clean_number(raw_amount),
-                        "limit_min": v_min,
-                        "limit_max": v_max
-                    })
-                
-                print(f"📈 {prefix} Acumulado: {len(all_results)} registros.")
+            for adv in anuncios_api:
+                # Adaptación de campos según tu requerimiento
+                all_results.append({
+                    "tipo": operation_type,
+                    "merchant": str(adv.get('nickName', 'N/A')),
+                    "precio_bob": float(adv.get('price', 0.0)),
+                    "monto_usdt": float(adv.get('editAmount', 0.0)), # Como pediste: editAmount -> monto_usdt
+                    "limit_min": float(adv.get('minAmount', 0.0)),
+                    "limit_max": float(adv.get('maxAmount', 0.0))
+                })
 
-            return all_results
-        except Exception as e:
-            print(f"❌ Error en {operation_type}: {e}")
-            return all_results
-        finally:
-            await browser.close()
+            hay_mas_datos = data.get('hasNextPage', False)
+            if hay_mas_datos and payload['pageNo'] < 10: # Límite de seguridad
+                payload['pageNo'] += 1
+                time.sleep(0.5) # La API es más tolerante que la web
+            else:
+                hay_mas_datos = False
+
+        print(f"📈 {prefix} Total capturado: {len(all_results)} registros.")
+        return all_results
+
+    except Exception as e:
+        print(f"❌ Error en scraping API {operation_type}: {e}")
+        return all_results
 
 def procesar_datos_db(data, trade_type):
     agrupado = defaultdict(lambda: {"suma": 0.0, "conteo": 0, "min": float('inf'), "max": 0.0, "inmediato": 0.0})
@@ -195,9 +195,18 @@ async def main_async():
 
 def obtener_y_guardar_datos():
     print(f"\n--- 🕒 CICLO DE SCRAPING: {datetime.now().strftime('%H:%M:%S')} ---")
+    
+    # 1. Capturamos el tiempo de inicio
+    start_time = time.time() 
+    
     resultados = []
     try:
+        # Ejecución del scraping
         data_compras, data_ventas = asyncio.run(main_async())
+        
+        # 2. Capturamos el tiempo de fin y calculamos la diferencia
+        end_time = time.time()
+        duration = end_time - start_time
         
         resultados.append(procesar_datos_db(data_compras, "BUY"))
         resultados.append(procesar_datos_db(data_ventas, "SELL"))
@@ -209,8 +218,10 @@ def obtener_y_guardar_datos():
         }
         
         collection.insert_one(documento)
-        print(f"✅ ÉXITO: {len(data_compras) + len(data_ventas)} anuncios guardados en MongoDB.")
         
+        # 3. Mostramos el tiempo transcurrido con 2 decimales
+        print(f"⏱️ Tiempo de ejecución: {duration:.2f} segundos")
+        print(f"✅ ÉXITO: {len(data_compras) + len(data_ventas)} anuncios guardados en MongoDB.")
         
     except Exception as e:
         print(f"❌ Error fatal en proceso principal: {e}")
@@ -218,8 +229,8 @@ def obtener_y_guardar_datos():
 def worker():
     while True:
         obtener_y_guardar_datos()
-        print(f"⏳ Esperando 60 segundos para la siguiente ronda...")
-        time.sleep(120)
+        print(f"⏳ Esperando 15 segundos para la siguiente ronda...")
+        time.sleep(10)
 
 if __name__ == '__main__':
     print("🚀 Recolector Bitget P2P -> MongoDB iniciado.")
